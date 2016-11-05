@@ -1,0 +1,11 @@
+{
+	"project": {
+		"name": "tcdeploy",
+		"description": "",
+		"package": "github.com/faryon93/tcdeploy"
+	},
+	"go": {
+		"min-version": "1.7.1"
+	},
+	"assets": []
+}
