@@ -11,9 +11,11 @@ import (
     "io"
     "io/ioutil"
    	"archive/zip"
+   	"time"
 
 	"github.com/faryon93/tcdeploy/teamcity"
 	"github.com/faryon93/tcdeploy/config"
+	"github.com/faryon93/tcdeploy/cache"
 )
 
 
@@ -23,6 +25,8 @@ import (
 
 const (
 	CONFIG_FILE_NAME = "Deployfile"
+	DEPLOYCACHE_FILE = ".deploycache"
+	ARTIFACT_TEMP_DIR = "/tmp"
 	ARTIFACT_TEMP_PREFIX = "tcdeploy"
 )
 
@@ -48,24 +52,31 @@ func main() {
         os.Exit(-1)
     }
 
-    // recursively check the watch directory
-    // if any Deployfiles exit
-    filepath.Walk(flag.Args()[0], func(path string, f os.FileInfo, err error) error {
-        if f != nil && !f.IsDir() && strings.HasSuffix(f.Name(), CONFIG_FILE_NAME) {
-        	// load the Deployfile
-            conf, err := config.Load(path)
-            if err != nil {
-            	return err
-            }
+    for {
+	    // recursively check the watch directory
+	    // if any Deployfiles exit
+	    filepath.Walk(flag.Args()[0], func(path string, f os.FileInfo, err error) error {
+	        if f != nil && !f.IsDir() && strings.HasSuffix(f.Name(), CONFIG_FILE_NAME) {
+	        	// load the Deployfile
+	            conf, err := config.Load(path)
+	            if err != nil {
+	            	log.Println("failed to load Deployfile:", err.Error())
+	            	return err
+	            }
 
-            // process the Deployfiles in paralell
-            processors.Add(1)
-            go process(*conf)
-        }
-        return nil
-    })
+	            // process the Deployfiles in paralell
+	            processors.Add(1)
+	            go process(*conf)
+	        }
+	        return nil
+	    })
 
-    processors.Wait()
+	    // wait until all Deployment files have been processed
+	    processors.Wait()
+
+	    // sleep until the next cycle
+	    time.Sleep(60 * time.Second)
+    }
 }
 
 
@@ -78,6 +89,13 @@ func process(config config.Config) {
 
 	// some metadata
 	dir := filepath.Dir(config.Path)
+	cacheFile := filepath.Join(dir, DEPLOYCACHE_FILE)
+
+	// load the cachefile
+	buildCache, err := cache.Load(cacheFile)
+	if err != nil {
+		log.Println("failed to load cache file:", err.Error())
+	}
 
 	// check the last build for the build configuration
 	// in order to determen if we have to update the deployment dir
@@ -88,30 +106,60 @@ func process(config config.Config) {
 		return
 	}
 
-	fmt.Println(config.Path + ":", builds)
-
-	// create a temporary file to download the artifact zip to
-	tmp, err := ioutil.TempFile(dir, ARTIFACT_TEMP_PREFIX)
-	if err != nil {
-		log.Println("failed to create temporary artifact file in", dir + ":", err.Error())
-		return
-	}
-	defer os.Remove(tmp.Name())
-
-	// download the artifacts to a tempfile
-	log.Println("downloading artifact file to", tmp.Name())
-	err = tc.DownloadArtifacts(config.TcBuildConfId, tmp)
-	if err != nil {
-		log.Println("failed to download artifact file:", err.Error())
+	// skip this directory, no successfull build is present
+	if len(builds) == 0 {
 		return
 	}
 
-	// extrat the downloaded zip archive
-	log.Println("extracting artifact file to", dir)
-	err = unzip(tmp.Name(), dir)
-	if err != nil {
-		log.Println("failed to extract artifact file:", err.Error())
-		return
+	// the build number has increased or no deployment
+	// has been executed yes -> we should do it now
+	if buildCache == nil || buildCache.LastBuildNumber < builds[0].Number {
+		log.Printf("deploying directory %s (#%d)\n", dir, builds[0].Number)
+
+		// we need to clean the deployment directory
+		if buildCache != nil {
+			// TODO: 
+			log.Println("purging currently deployed files in dir", dir)
+		}
+
+		// create a temporary file to download the artifact zip to
+		tmp, err := ioutil.TempFile(ARTIFACT_TEMP_DIR, ARTIFACT_TEMP_PREFIX)
+		if err != nil {
+			log.Println("failed to create temporary artifact file in", dir + ":", err.Error())
+			return
+		}
+		defer os.Remove(tmp.Name())
+
+		// download the artifacts to a tempfile
+		log.Println("downloading artifact file to", tmp.Name())
+		err = tc.DownloadArtifacts(config.TcBuildConfId, tmp)
+		if err != nil {
+			log.Println("failed to download artifact file:", err.Error())
+			return
+		}
+
+		// extract the downloaded zip archive
+		log.Println("extracting artifact file to", dir)
+		paths, err := unzip(tmp.Name(), dir)
+		if err != nil {
+			log.Println("failed to extract artifact file:", err.Error())
+			return
+		}
+
+		// setup the cache entry
+		buildCache = &cache.Cache{
+			LastBuildNumber: builds[0].Number,
+			Paths: paths,
+		}
+
+		// save the cachefile with the new infos
+		err = buildCache.Save(cacheFile)
+		if err != nil {
+			log.Println("failed to save cachefile:", err.Error())
+			return
+		}
+
+		log.Printf("successfull deployed build #%d to %s", builds[0].Number, dir)
 	}
 }
 
@@ -120,10 +168,11 @@ func process(config config.Config) {
 //  helper functions
 // ----------------------------------------------------------------------------------
 
-func unzip(src, dest string) error {
+// @see http://stackoverflow.com/questions/20357223/easy-way-to-unzip-file-with-golang
+func unzip(src, dest string) ([]string, error) {
     r, err := zip.OpenReader(src)
     if err != nil {
-        return err
+        return nil, err
     }
     defer func() {
         if err := r.Close(); err != nil {
@@ -132,6 +181,8 @@ func unzip(src, dest string) error {
     }()
 
     os.MkdirAll(dest, 0755)
+
+    paths := make([]string, 0)
 
     // Closure to address file descriptors issue with all the deferred .Close() methods
     extractAndWriteFile := func(f *zip.File) error {
@@ -146,6 +197,7 @@ func unzip(src, dest string) error {
         }()
 
         path := filepath.Join(dest, f.Name)
+        paths = append(paths, path)
 
         if f.FileInfo().IsDir() {
             os.MkdirAll(path, 0755)
@@ -173,9 +225,9 @@ func unzip(src, dest string) error {
     for _, f := range r.File {
         err := extractAndWriteFile(f)
         if err != nil {
-            return err
+            return nil, err
         }
     }
 
-    return nil
+    return paths, nil
 }
