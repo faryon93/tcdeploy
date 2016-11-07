@@ -13,7 +13,8 @@ import (
 
 type Cache struct {
 	LastBuildNumber int `json:"build_number"`
-	Paths []string `json:"paths"` 
+	Files []string `json:"files"`
+    Dirs []string `json:"dirs"`
 }
 
 

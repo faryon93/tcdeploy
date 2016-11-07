@@ -12,6 +12,7 @@ import (
     "io/ioutil"
    	"archive/zip"
    	"time"
+   	"sort"
 
 	"github.com/faryon93/tcdeploy/teamcity"
 	"github.com/faryon93/tcdeploy/config"
@@ -28,6 +29,8 @@ const (
 	DEPLOYCACHE_FILE = ".deploycache"
 	ARTIFACT_TEMP_DIR = "/tmp"
 	ARTIFACT_TEMP_PREFIX = "tcdeploy"
+
+	CYCLE_TIME = 60
 )
 
 
@@ -35,6 +38,10 @@ const (
 //  global variables
 // ----------------------------------------------------------------------------------
 
+// command line arguments
+var oneshot bool
+
+// globale states
 var processors sync.WaitGroup = sync.WaitGroup{}
 
 
@@ -44,6 +51,7 @@ var processors sync.WaitGroup = sync.WaitGroup{}
 
 func main() {
     // parse command line args
+    flag.BoolVar(&oneshot, "one-shot", false, "")
     flag.Parse()
 
     // make sure a command is supplied
@@ -74,8 +82,14 @@ func main() {
 	    // wait until all Deployment files have been processed
 	    processors.Wait()
 
-	    // sleep until the next cycle
-	    time.Sleep(60 * time.Second)
+	    // we are finished -> exit the application
+	    if oneshot {
+	    	return
+
+	    // sleep until the next cycle	
+	    } else {
+	    	time.Sleep(CYCLE_TIME * time.Second)
+	    }
     }
 }
 
@@ -116,12 +130,6 @@ func process(config config.Config) {
 	if buildCache == nil || buildCache.LastBuildNumber < builds[0].Number {
 		log.Printf("deploying directory %s (#%d)\n", dir, builds[0].Number)
 
-		// we need to clean the deployment directory
-		if buildCache != nil {
-			// TODO: 
-			log.Println("purging currently deployed files in dir", dir)
-		}
-
 		// create a temporary file to download the artifact zip to
 		tmp, err := ioutil.TempFile(ARTIFACT_TEMP_DIR, ARTIFACT_TEMP_PREFIX)
 		if err != nil {
@@ -138,9 +146,34 @@ func process(config config.Config) {
 			return
 		}
 
+		// we need to clean the deployment directory
+		if buildCache != nil {
+			log.Println("purging currently deployed files in dir", dir)
+
+			// remove all files
+			for _,file := range buildCache.Files {
+				err = os.Remove(file)
+				if err != nil {
+					log.Println("failed purge file", file + ":", err.Error())
+					continue
+				}
+			}
+
+			// sort the dirs by lengths, so that the subdirs
+			// are deleted first
+			sort.Sort(ByLengthSorter(buildCache.Dirs))
+			for _,dir := range buildCache.Dirs {
+				err = os.Remove(dir)
+				if err != nil {
+					log.Println(err.Error())
+					continue
+				}
+			}
+		}
+
 		// extract the downloaded zip archive
 		log.Println("extracting artifact file to", dir)
-		paths, err := unzip(tmp.Name(), dir)
+		dirs, files, err := unzip(tmp.Name(), dir)
 		if err != nil {
 			log.Println("failed to extract artifact file:", err.Error())
 			return
@@ -149,7 +182,8 @@ func process(config config.Config) {
 		// setup the cache entry
 		buildCache = &cache.Cache{
 			LastBuildNumber: builds[0].Number,
-			Paths: paths,
+			Files: files,
+			Dirs: dirs,
 		}
 
 		// save the cachefile with the new infos
@@ -169,10 +203,10 @@ func process(config config.Config) {
 // ----------------------------------------------------------------------------------
 
 // @see http://stackoverflow.com/questions/20357223/easy-way-to-unzip-file-with-golang
-func unzip(src, dest string) ([]string, error) {
+func unzip(src, dest string) ([]string, []string, error) {
     r, err := zip.OpenReader(src)
     if err != nil {
-        return nil, err
+        return nil, nil, err
     }
     defer func() {
         if err := r.Close(); err != nil {
@@ -182,7 +216,8 @@ func unzip(src, dest string) ([]string, error) {
 
     os.MkdirAll(dest, 0755)
 
-    paths := make([]string, 0)
+    filePaths := make([]string, 0)
+    dirPaths := make([]string, 0)
 
     // Closure to address file descriptors issue with all the deferred .Close() methods
     extractAndWriteFile := func(f *zip.File) error {
@@ -197,12 +232,14 @@ func unzip(src, dest string) ([]string, error) {
         }()
 
         path := filepath.Join(dest, f.Name)
-        paths = append(paths, path)
+        
 
         if f.FileInfo().IsDir() {
             os.MkdirAll(path, 0755)
+            dirPaths = append(dirPaths, path)
 
         } else {
+        	filePaths = append(filePaths, path)
             os.MkdirAll(filepath.Dir(path), 0755)
             f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
             if err != nil {
@@ -223,11 +260,14 @@ func unzip(src, dest string) ([]string, error) {
     }
 
     for _, f := range r.File {
-        err := extractAndWriteFile(f)
-        if err != nil {
-            return nil, err
-        }
+    	if f.Name != CONFIG_FILE_NAME && 
+    	   f.Name != DEPLOYCACHE_FILE {
+    		err := extractAndWriteFile(f)
+	        if err != nil {
+	            return nil, nil, err
+	        }	
+    	}
     }
 
-    return paths, nil
+    return dirPaths, filePaths, nil
 }
