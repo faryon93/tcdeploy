@@ -1,5 +1,6 @@
 # tcdeploy - teamcity deployment service
 
+[![Travis CI](https://travis-ci.org/faryon93/tcdeploy.svg?branch=master)](https://travis-ci.org/faryon93/tcdeploy)
 
 ---
 
