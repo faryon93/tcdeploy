@@ -68,7 +68,7 @@ func main() {
 	        	// load the Deployfile
 	            conf, err := config.Load(path)
 	            if err != nil {
-	            	log.Println("failed to load Deployfile:", err.Error())
+	            	log.Println("failed to load", path + ":", err.Error())
 	            	return err
 	            }
 

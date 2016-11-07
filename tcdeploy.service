@@ -1,0 +1,10 @@
+[Unit]
+Description=teamcity deployment service
+After=network.target
+
+[Service]
+Restart=on-failure
+ExecStart=/usr/sbin/tcdeploy /www/public
+
+[Install]
+WantedBy=multi-user.target
