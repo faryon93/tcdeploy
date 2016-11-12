@@ -26,3 +26,10 @@ tc_user = "deploy"
 tc_password = "deploy"
 
 ```
+
+## Security Considerations
+
+If the directory, where the Deployfile is located, will be published to the general public (e.g. via http server), then you should restrict the access to the following files:
+
+- Deployfile
+- .deploycache
