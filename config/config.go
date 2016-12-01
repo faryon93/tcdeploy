@@ -4,6 +4,14 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
+// ----------------------------------------------------------------------------------
+//  constants
+// ----------------------------------------------------------------------------------
+
+const (
+	PROVIDER_TC = "tc"
+)
+
 
 // ----------------------------------------------------------------------------------
 //  types
@@ -11,6 +19,7 @@ import (
 
 type Config struct {
 	Path string
+	Provider string `toml:"provider"`
 
 	TcUrl string `toml:"tc_url"`
 	TcUser string `toml:"tc_user"`

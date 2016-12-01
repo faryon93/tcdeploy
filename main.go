@@ -1,22 +1,22 @@
 package main
 
 import (
-	"fmt"
-	"log"
-	"flag"
-	"os"
-	"path/filepath"
+    "fmt"
+    "log"
+    "flag"
+    "os"
+    "path/filepath"
     "strings"
     "sync"
     "io"
     "io/ioutil"
-   	"archive/zip"
-   	"time"
-   	"sort"
+    "archive/zip"
+    "time"
+    "sort"
 
-	"github.com/faryon93/tcdeploy/teamcity"
-	"github.com/faryon93/tcdeploy/config"
-	"github.com/faryon93/tcdeploy/cache"
+    "github.com/faryon93/tcdeploy/teamcity"
+    "github.com/faryon93/tcdeploy/config"
+    "github.com/faryon93/tcdeploy/cache"
 )
 
 
@@ -25,12 +25,12 @@ import (
 // ----------------------------------------------------------------------------------
 
 const (
-	CONFIG_FILE_NAME = "Deployfile"
-	DEPLOYCACHE_FILE = ".deploycache"
-	ARTIFACT_TEMP_DIR = "/tmp"
-	ARTIFACT_TEMP_PREFIX = "tcdeploy"
+    CONFIG_FILE_NAME = "Deployfile"
+    DEPLOYCACHE_FILE = ".deploycache"
+    ARTIFACT_TEMP_DIR = "/tmp"
+    ARTIFACT_TEMP_PREFIX = "tcdeploy"
 
-	CYCLE_TIME = 60
+    CYCLE_TIME = 60
 )
 
 
@@ -61,35 +61,37 @@ func main() {
     }
 
     for {
-	    // recursively check the watch directory
-	    // if any Deployfiles exit
-	    filepath.Walk(flag.Args()[0], func(path string, f os.FileInfo, err error) error {
-	        if f != nil && !f.IsDir() && strings.HasSuffix(f.Name(), CONFIG_FILE_NAME) {
-	        	// load the Deployfile
-	            conf, err := config.Load(path)
-	            if err != nil {
-	            	log.Println("failed to load", path + ":", err.Error())
-	            	return err
-	            }
+        // recursively check the watch directory
+        // if any Deployfiles exit
+        filepath.Walk(flag.Args()[0], func(path string, f os.FileInfo, err error) error {
+            if f != nil && !f.IsDir() && strings.HasSuffix(f.Name(), CONFIG_FILE_NAME) {
+                // load the Deployfile
+                conf, err := config.Load(path)
+                if err != nil {
+                    log.Println("failed to load", path + ":", err.Error())
+                    return err
+                }
 
-	            // process the Deployfiles in paralell
-	            processors.Add(1)
-	            go process(*conf)
-	        }
-	        return nil
-	    })
+                // process the Deployfiles in paralell
+                if conf.Provider == config.PROVIDER_TC {
+                    processors.Add(1)
+                    go process(*conf)
+                }
+            }
+            return nil
+        })
 
-	    // wait until all Deployment files have been processed
-	    processors.Wait()
+        // wait until all Deployment files have been processed
+        processors.Wait()
 
-	    // we are finished -> exit the application
-	    if oneshot {
-	    	return
+        // we are finished -> exit the application
+        if oneshot {
+            return
 
-	    // sleep until the next cycle	
-	    } else {
-	    	time.Sleep(CYCLE_TIME * time.Second)
-	    }
+        // sleep until the next cycle   
+        } else {
+            time.Sleep(CYCLE_TIME * time.Second)
+        }
     }
 }
 
@@ -99,102 +101,102 @@ func main() {
 // ----------------------------------------------------------------------------------
 
 func process(config config.Config) {
-	defer processors.Done()
+    defer processors.Done()
 
-	// some metadata
-	dir := filepath.Dir(config.Path)
-	cacheFile := filepath.Join(dir, DEPLOYCACHE_FILE)
+    // some metadata
+    dir := filepath.Dir(config.Path)
+    cacheFile := filepath.Join(dir, DEPLOYCACHE_FILE)
 
-	// load the cachefile
-	buildCache, err := cache.Load(cacheFile)
-	if err != nil {
-		log.Println("failed to load cache file:", err.Error())
-	}
+    // load the cachefile
+    buildCache, err := cache.Load(cacheFile)
+    if err != nil {
+        log.Println("failed to load cache file:", err.Error())
+    }
 
-	// check the last build for the build configuration
-	// in order to determen if we have to update the deployment dir
-	tc := teamcity.New(config.TcUrl, config.TcUser, config.TcPassword)
-	builds, err := tc.GetBuilds(config.TcBuildConfId, 1)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
+    // check the last build for the build configuration
+    // in order to determen if we have to update the deployment dir
+    tc := teamcity.New(config.TcUrl, config.TcUser, config.TcPassword)
+    builds, err := tc.GetBuilds(config.TcBuildConfId, 1)
+    if err != nil {
+        fmt.Println(err)
+        return
+    }
 
-	// skip this directory, no successfull build is present
-	if len(builds) == 0 {
-		return
-	}
+    // skip this directory, no successfull build is present
+    if len(builds) == 0 {
+        return
+    }
 
-	// the build number has increased or no deployment
-	// has been executed yes -> we should do it now
-	if buildCache == nil || buildCache.LastBuildNumber < builds[0].Number {
-		log.Printf("deploying directory %s (#%d)\n", dir, builds[0].Number)
+    // the build number has increased or no deployment
+    // has been executed yes -> we should do it now
+    if buildCache == nil || buildCache.LastBuildNumber < builds[0].Number {
+        log.Printf("deploying directory %s (#%d)\n", dir, builds[0].Number)
 
-		// create a temporary file to download the artifact zip to
-		tmp, err := ioutil.TempFile(ARTIFACT_TEMP_DIR, ARTIFACT_TEMP_PREFIX)
-		if err != nil {
-			log.Println("failed to create temporary artifact file in", dir + ":", err.Error())
-			return
-		}
-		defer os.Remove(tmp.Name())
+        // create a temporary file to download the artifact zip to
+        tmp, err := ioutil.TempFile(ARTIFACT_TEMP_DIR, ARTIFACT_TEMP_PREFIX)
+        if err != nil {
+            log.Println("failed to create temporary artifact file in", dir + ":", err.Error())
+            return
+        }
+        defer os.Remove(tmp.Name())
 
-		// download the artifacts to a tempfile
-		log.Println("downloading artifact file to", tmp.Name())
-		err = tc.DownloadArtifacts(config.TcBuildConfId, tmp)
-		if err != nil {
-			log.Println("failed to download artifact file:", err.Error())
-			return
-		}
+        // download the artifacts to a tempfile
+        log.Println("downloading artifact file to", tmp.Name())
+        err = tc.DownloadArtifacts(config.TcBuildConfId, tmp)
+        if err != nil {
+            log.Println("failed to download artifact file:", err.Error())
+            return
+        }
 
-		// we need to clean the deployment directory
-		if buildCache != nil {
-			log.Println("purging currently deployed files in dir", dir)
+        // we need to clean the deployment directory
+        if buildCache != nil {
+            log.Println("purging currently deployed files in dir", dir)
 
-			// remove all files
-			for _,file := range buildCache.Files {
-				err = os.Remove(file)
-				if err != nil {
-					log.Println("failed purge file", file + ":", err.Error())
-					continue
-				}
-			}
+            // remove all files
+            for _,file := range buildCache.Files {
+                err = os.Remove(file)
+                if err != nil {
+                    log.Println("failed purge file", file + ":", err.Error())
+                    continue
+                }
+            }
 
-			// sort the dirs by lengths, so that the subdirs
-			// are deleted first
-			sort.Sort(ByLengthSorter(buildCache.Dirs))
-			for _,dir := range buildCache.Dirs {
-				err = os.Remove(dir)
-				if err != nil {
-					log.Println(err.Error())
-					continue
-				}
-			}
-		}
+            // sort the dirs by lengths, so that the subdirs
+            // are deleted first
+            sort.Sort(ByLengthSorter(buildCache.Dirs))
+            for _,dir := range buildCache.Dirs {
+                err = os.Remove(dir)
+                if err != nil {
+                    log.Println(err.Error())
+                    continue
+                }
+            }
+        }
 
-		// extract the downloaded zip archive
-		log.Println("extracting artifact file to", dir)
-		dirs, files, err := unzip(tmp.Name(), dir)
-		if err != nil {
-			log.Println("failed to extract artifact file:", err.Error())
-			return
-		}
+        // extract the downloaded zip archive
+        log.Println("extracting artifact file to", dir)
+        dirs, files, err := unzip(tmp.Name(), dir)
+        if err != nil {
+            log.Println("failed to extract artifact file:", err.Error())
+            return
+        }
 
-		// setup the cache entry
-		buildCache = &cache.Cache{
-			LastBuildNumber: builds[0].Number,
-			Files: files,
-			Dirs: dirs,
-		}
+        // setup the cache entry
+        buildCache = &cache.Cache{
+            LastBuildNumber: builds[0].Number,
+            Files: files,
+            Dirs: dirs,
+        }
 
-		// save the cachefile with the new infos
-		err = buildCache.Save(cacheFile)
-		if err != nil {
-			log.Println("failed to save cachefile:", err.Error())
-			return
-		}
+        // save the cachefile with the new infos
+        err = buildCache.Save(cacheFile)
+        if err != nil {
+            log.Println("failed to save cachefile:", err.Error())
+            return
+        }
 
-		log.Printf("successfull deployed build #%d to %s", builds[0].Number, dir)
-	}
+        log.Printf("successfull deployed build #%d to %s", builds[0].Number, dir)
+    }
 }
 
 
@@ -239,7 +241,7 @@ func unzip(src, dest string) ([]string, []string, error) {
             dirPaths = append(dirPaths, path)
 
         } else {
-        	filePaths = append(filePaths, path)
+            filePaths = append(filePaths, path)
             os.MkdirAll(filepath.Dir(path), 0755)
             f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0755)
             if err != nil {
@@ -260,13 +262,13 @@ func unzip(src, dest string) ([]string, []string, error) {
     }
 
     for _, f := range r.File {
-    	if f.Name != CONFIG_FILE_NAME && 
-    	   f.Name != DEPLOYCACHE_FILE {
-    		err := extractAndWriteFile(f)
-	        if err != nil {
-	            return nil, nil, err
-	        }	
-    	}
+        if f.Name != CONFIG_FILE_NAME && 
+           f.Name != DEPLOYCACHE_FILE {
+            err := extractAndWriteFile(f)
+            if err != nil {
+                return nil, nil, err
+            }   
+        }
     }
 
     return dirPaths, filePaths, nil
