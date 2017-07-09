@@ -20,6 +20,7 @@ Tcdeploy is designed as a daemon, so a systemd service file is supplied within t
 Place a **Deployfile** file in a directory within the search path of tcdeploy. The artifacts will be deployed in the directory containing the **Deployfile**.
 
 ```ini
+provider = "tc"
 tc_url = "http://teamcity.local"
 tc_build_conf = "MyBuildConfig"
 tc_user = "deploy"
