@@ -4,12 +4,12 @@
 
 ---
 
-Tcdeploy offers a simple method to deploy artifacts from TeamCity build servers to your target server. The build server is queried cyclically for a new successfull builds in order to download and extract all artifacts to the target directory. We support deploying multipble build configurations to multiple directories.
+Tcdeploy offers a simple method to deploy artifacts from TeamCity build servers to your target server. The build server is queried cyclically for a new successfull build in order to download and extract all artifacts to the target directory. We support deploying multiple build configurations to multiple directories.
 
 
 ## Usage
 
-The only command-line option which is obligatory is the directory wich should be search recursivly by tcdeploy:
+The only command-line option, which is obligatory, is the directory which should be search recursivly by tcdeploy:
 ```sh
 $ /usr/sbin/tcdeploy /var/www
 ```
